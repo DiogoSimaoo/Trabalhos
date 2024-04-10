@@ -1,0 +1,155 @@
+import tensorflow as tf
+from tensorflow import keras
+from sklearn.datasets import load_iris, load_digits
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import accuracy_score, confusion_matrix, ConfusionMatrixDisplay
+import matplotlib.pyplot as plt
+import random
+import numpy as np
+
+
+CREATE_CLASS = True  
+SGD = False  
+IRIS = False  
+SHOW = False  
+
+if IRIS:
+    examples = load_iris()
+else:
+    examples = load_digits()  # https://scikit-learn.org/stable/auto_examples/classification/plot_digits_classification.html; 10 digits;  1797 examples
+    if SHOW:
+        idx = random.randint(0, len(examples.target))
+        print(examples.data[idx])
+        print(examples.data[idx].reshape(8, 8))
+        print(examples.target[idx])
+        plt.matshow(examples.data[idx].reshape(8, 8), cmap=plt.cm.gray_r)
+        plt.show()
+
+X = examples.data
+y = examples.target
+
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+
+scaler = StandardScaler()
+X_train = scaler.fit_transform(X_train)
+X_test = scaler.transform(X_test)
+
+X_train = tf.convert_to_tensor(X_train, dtype=tf.float32)
+X_test = tf.convert_to_tensor(X_test, dtype=tf.float32)
+y_train = tf.cast(y_train, dtype=tf.int32)  
+y_test = tf.cast(y_test, dtype=tf.int32)
+
+input_size = X_train.shape[1]
+hidden_size = 8
+output_size = len(examples.target_names)
+batch_size = 100
+num_epochs = 500
+
+
+learning_rate = 0.1
+regularization_param = 0.001
+momentum_param = 0.9
+dropout_p = 0.25
+
+
+if CREATE_CLASS:
+    class ThreeLayerNet(keras.Model):
+        def __init__(self, input_size, hidden_size, output_size):
+            super(ThreeLayerNet, self).__init__()
+            self.fc1 = keras.layers.Dense(hidden_size, activation="relu")
+            self.dropout1 = keras.layers.Dropout(dropout_p)
+            self.fc2 = keras.layers.Dense(hidden_size, activation="relu")
+            self.dropout2 = keras.layers.Dropout(dropout_p)
+            self.fc3 = keras.layers.Dense(output_size)
+
+        def call(self, x):
+            x = self.fc1(x)
+            x = self.dropout1(x)
+            x = self.fc2(x)
+            x = self.dropout2(x)
+            x = self.fc3(x)
+            return x
+
+    model = ThreeLayerNet(input_size, hidden_size, output_size)
+else:
+    
+    model = keras.Sequential([
+        keras.layers.Dense(hidden_size, activation="relu", input_shape=(input_size,)),
+        keras.layers.Dropout(dropout_p),
+        keras.layers.Dense(hidden_size, activation="relu"),
+        keras.layers.Dropout(dropout_p),
+        keras.layers.Dense(output_size),
+    ])
+
+
+criterion = keras.losses.CategoricalCrossentropy(from_logits=True)  
+
+if SGD:
+    optimizer = keras.optimizers.SGD(learning_rate=learning_rate, momentum=momentum_param, decay=regularization_param)
+else:
+    optimizer = keras.optimizers.Adam(learning_rate=learning_rate)
+
+
+y_train_one_hot = tf.one_hot(y_train, depth=output_size)
+y_test_one_hot = tf.one_hot(y_test, depth=output_size)
+
+train_losses = []
+test_losses = []
+
+
+for epoch in range(num_epochs):
+    train_loss = 0.0
+    with tf.GradientTape() as tape:
+        
+        predictions = model(X_train)
+        
+        loss = criterion(y_train_one_hot, predictions)
+
+    gradients = tape.gradient(loss, model.trainable_variables)
+    optimizer.apply_gradients(zip(gradients, model.trainable_variables))
+
+    train_loss += loss.numpy()
+    train_loss /= len(X_train)
+    train_losses.append(train_loss)
+
+
+    with tf.GradientTape(persistent=False) as tape:
+        tape.watch(X_test)
+        outputs = model(X_test)
+        test_loss = criterion(y_test_one_hot, outputs)
+    test_losses.append(test_loss.numpy())
+
+    if (epoch + 1) % 100 == 0:
+        print(f'Epoch [{epoch + 1}/{num_epochs}], Train Loss: {train_loss:.4f}')
+
+plt.plot(range(num_epochs), train_losses, label='Train Loss')
+plt.plot(range(num_epochs), test_losses, label='Test Loss')
+plt.xlabel('Epoch')
+plt.ylabel('Loss')
+plt.title('Train and Test Losses')
+plt.legend()
+plt.show()
+
+
+test_ds = tf.data.Dataset.from_tensor_slices((X_test, y_test)).batch(batch_size)
+
+
+test_accuracy = tf.keras.metrics.Accuracy()
+for x_batch, y_batch in test_ds:
+    predictions = model(x_batch)
+    predicted_labels = tf.argmax(predictions, axis=1, output_type=tf.int32)
+    test_accuracy.update_state(y_batch, predicted_labels)
+
+print(f'Accuracy on test set: {test_accuracy.result().numpy():.4f}')
+
+
+print(f'Accuracy on test set: {test_accuracy.result().numpy():.4f}')
+
+y_pred = np.concatenate([np.argmax(model(x_test_tensor).numpy(), axis=1) for x_test_tensor, _ in test_ds])
+cm = confusion_matrix(y_test.numpy(), y_pred)
+labels = np.unique(y_test.numpy())
+disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=labels)
+disp.plot()
+plt.show()
